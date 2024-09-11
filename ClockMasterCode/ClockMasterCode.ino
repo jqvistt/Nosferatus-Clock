@@ -61,6 +61,8 @@ int closedServoPos = 70;
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
+bool isDisplayOn = true;
+
 const int keyPin = A0;
 int analogInputValue = 0;
 int roundedInputValue = 0;
@@ -265,8 +267,12 @@ void setRTCTime() {
 }
 
 void displayTime() {
+  if (!isEventActive()) {  // Don't update the display if the event is running
 
-  if (!isEventActive()) {  //dont do jack shit with the display if event is running!
+    if (!isDisplayOn) {
+      display.ssd1306_command(SSD1306_DISPLAYON);  // Turn on the display
+      isDisplayOn = true;
+    }
 
     DateTime now = rtc.now();
     if (!isSettingTime) {
@@ -312,28 +318,61 @@ void displayTime() {
       display.print("Setting Time...");
     }
     display.display();
+
   } else {
-    display.clearDisplay();
+    if (isDisplayOn) {
+      display.ssd1306_command(SSD1306_DISPLAYOFF);  // Turn off the display
+      isDisplayOn = false;
+    }
   }
 }
 
 void EventHandler() {
   DateTime now = rtc.now();
 
-  if (now.hour() == 0 && now.minute() == 0 && now.second() == 0 && !isSettingTime) {
+  if (!isSettingTime && !isEventActive()) {
+    checkMidnightEvent(now);
+    checkHalfHourEvent(now);
+    checkOnTheHourEvent(now);
+  }
+}
+
+// Check if it's midnight and handle accordingly
+void checkMidnightEvent(const DateTime &now) {
+  if (now.hour() == 0 && now.minute() == 0 && now.second() == 0) {
     queuedStrikes = 12;
-    skullTask.restart();
-    reaperTask.restartDelayed(10000000);
-  } else if (now.minute() == 30 && now.second() == 0 && !isSettingTime) {
+    restartTaskIfNotRunning(skullTask);
+    restartTaskIfNotRunningDelayed(reaperTask, 10000000);
+  }
+}
+
+// Check if it's 30 minutes past the hour and handle accordingly
+void checkHalfHourEvent(const DateTime &now) {
+  if (now.minute() == 30 && now.second() == 0) {
     queuedStrikes = 1;
-    strikeBellTask.restart();
-  } else if (now.hour() != 0 && now.minute() == 0 && now.second() == 0 && !isSettingTime) {
-    if (now.hour() > 12) {
-      queuedStrikes = now.hour() - 12;
-    } else {
-      queuedStrikes = now.hour();
-    }
-    skullTask.restart();
+    restartTaskIfNotRunning(strikeBellTask);
+  }
+}
+
+// Check if it's the top of the hour and handle accordingly
+void checkOnTheHourEvent(const DateTime &now) {
+  if (now.minute() == 0 && now.second() == 0 && now.hour() != 0) {
+    queuedStrikes = (now.hour() > 12) ? now.hour() - 12 : now.hour();
+    restartTaskIfNotRunning(skullTask);
+  }
+}
+
+// Helper function to restart a task only if it's not already running
+void restartTaskIfNotRunning(Task &task) {
+  if (!task.isEnabled()) {
+    task.restart();
+  }
+}
+
+// Helper function to restart a task with a delay only if it's not already running
+void restartTaskIfNotRunningDelayed(Task &task, unsigned long delay) {
+  if (!task.isEnabled()) {
+    task.restartDelayed(delay);
   }
 }
 
@@ -350,7 +389,9 @@ void calibrateSkullTaskCallback() {
     case 0:
       Serial.println("calibrateSkullTask | State 0: Enabling SKULL STEPPER for calibration!");
       digitalWrite(ENABLE_SKULL, LOW);  // ENABLE SKULL STEPPER
-      state = 1;
+      if (!isDisplayOn) {
+        state = 1;
+      }
       break;
 
     case 1:
@@ -376,8 +417,9 @@ void calibrateSkullTaskCallback() {
       Serial.println("calibrateSkullTask | State 3: Calibration complete, disabling SKULL STEPPER");
       digitalWrite(ENABLE_SKULL, HIGH);  // DISABLE SKULL STEPPER
       //skullTask.restart();               // START THE ACTUAL SKULL TASK
-      calibrateSkullTask.disable();  // Disable the task as it is complete
-      state = 0;                     // Reset the state machine
+      calibrateSkullTask.disable();           // Disable the task as it is complete
+      runner.deleteTask(calibrateSkullTask);  // delete this task from runner as its only needed on startup...
+      state = 0;                              // Reset the state machine
       break;
   }
 }
@@ -395,15 +437,17 @@ void skullTaskCallback() {
 
   const unsigned long slowStepDelay = 2;  //delay for slow-stepping!
 
-  const unsigned long delayBeforeStrike = 1000;       // Delay in microseconds before strike (1000 ms / 1s)
-  const unsigned long delayAfterStrike = 500;         // Delay in microseconds after strike (500 ms / 0.5s)
+  const unsigned long delayBeforeStrike = 1000;        // Delay in microseconds before strike (1000 ms / 1s)
+  const unsigned long delayAfterStrike = 500;          // Delay in microseconds after strike (500 ms / 0.5s)
   const unsigned long delayAfterStrikingState = 1000;  //Delay before moving on from the striking state (1000ms / 1s)
 
   switch (state) {
     case 0:
       Serial.println("skullTask | State 0: Enabling SKULL STEPPER");
       digitalWrite(ENABLE_SKULL, LOW);  // ENABLE SKULL STEPPER
-      state = 1;
+      if (!isDisplayOn) {
+        state = 1;
+      }
       break;
 
     case 1:
@@ -504,7 +548,11 @@ void calibrateReaperTaskCallback() {
       doorRight.write(0);
       doorLeft.write(180);
       previousMillis = currentMillis;
-      state = 1;
+
+      if (!isDisplayOn) {
+        state = 1;
+      }
+
       break;
 
     case 1:
@@ -517,7 +565,7 @@ void calibrateReaperTaskCallback() {
     case 2:
       if (digitalRead(LIMIT_REAPER) == LOW) {
         Serial.println("calibrateReaperTask | State 2: Reaper already positioned. Skipping calibration.");
-        state = 5; // Move to state 5 to close doors
+        state = 5;  // Move to state 5 to close doors
       } else {
         Serial.println("calibrateReaperTask | State 2: Enabling REAPER STEPPER");
         digitalWrite(ENABLE_REAPER, LOW);  // ENABLE REAPER STEPPER
@@ -530,7 +578,7 @@ void calibrateReaperTaskCallback() {
     case 3:
       if (digitalRead(LIMIT_REAPER) == LOW) {
         Serial.println("calibrateReaperTask | State 3: Limit switch activated, stopping calibration");
-        state = 5; // Move to state 5 to close doors
+        state = 5;  // Move to state 5 to close doors
       } else if (currentMillis - previousMillis >= stepDelay) {
         digitalWrite(STEP_REAPER, HIGH);
         previousMillis = currentMillis;
@@ -558,10 +606,11 @@ void calibrateReaperTaskCallback() {
     case 6:
       if (doorRight.read() >= closedServoPos && doorLeft.read() <= (180 - closedServoPos)) {
         Serial.println("calibrateReaperTask | State 6: Doors closed, disabling REAPER STEPPER");
-        digitalWrite(ENABLE_REAPER, HIGH);  // DISABLE REAPER STEPPER
-        calibrateReaperTask.disable();      // Disable the task as it is complete
-        state = 0;                          // Reset the state machine
-        stepCount = 0;                      // Reset step count for the next activation
+        digitalWrite(ENABLE_REAPER, HIGH);       // DISABLE REAPER STEPPER
+        calibrateReaperTask.disable();           // Disable the task as it is complete
+        runner.deleteTask(calibrateReaperTask);  //Delete this task from the runner since it is not needed at any point except startup...
+        state = 0;                               // Reset the state machine
+        stepCount = 0;                           // Reset step count for the next activation
       }
       break;
   }
@@ -583,7 +632,11 @@ void reaperTaskCallback() {
     case 0:
       Serial.println("reaperTask | State 0: Moving servos to open position");
       previousMillis = currentMillis;
-      state = 1;
+
+      if (!isDisplayOn) {
+        state = 1;
+      }
+
       break;
 
     case 1:
@@ -675,7 +728,7 @@ void strikeBellTaskCallback() {
     case 1:
       if (currentMillis - previousMillis >= delayBeforeStrike) {
         Serial.println("strikeBellTask | State 1: Activating solenoids for strike");
-        digitalWrite(SOLENOID_BELL, HIGH);
+        //digitalWrite(SOLENOID_BELL, HIGH);
         previousMillis = currentMillis;
         state = 2;
       }
@@ -684,7 +737,7 @@ void strikeBellTaskCallback() {
     case 2:
       if (currentMillis - previousMillis >= delayAfterStrike) {
         Serial.println("strikeBellTask | State 2: Deactivating solenoids after strike");
-        digitalWrite(SOLENOID_BELL, LOW);
+        //digitalWrite(SOLENOID_BELL, LOW);
         strikeCount++;
         Serial.print("Strike Count: ");
         Serial.println(strikeCount);
@@ -710,31 +763,35 @@ void setup() {
   //Serial.begin(9600);
   SetPinModes();
   InitializeRTC();
-  delay(500);
   InitializeDisplay();
   InitializeSteppers();
   InitializeServos();
 
   runner.init();
+
   runner.addTask(calibrateSkullTask);
-  runner.addTask(skullTask);
   runner.addTask(calibrateReaperTask);
+
+  runner.addTask(skullTask);
   runner.addTask(reaperTask);
   runner.addTask(strikeBellTask);
 
   calibrateSkullTask.restart();
   calibrateReaperTask.restart();
+
+  delay(2000);  // small delay after calibration
+
   //reaperTask.restart();
+  //queuedStrikes = 12;
   //skullTask.restart();
+  //reaperTask.restartDelayed(10000000);
 }
 
 void loop() {
   runner.execute();
-
+  EventHandler();
   // Read the key module input
   inputValue = checkKeyInput();
   handleInput(inputValue);
-
-  EventHandler();
   displayTime();
 }
