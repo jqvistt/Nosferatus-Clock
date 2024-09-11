@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <RTClib.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -6,8 +7,6 @@
 #define _TASK_MICRO_RES
 #include <TaskScheduler.h>
 #include <SafeString.h>
-#include <Arduino.h>
-
 
 Scheduler runner;  // Create the scheduler
 
@@ -84,38 +83,7 @@ const unsigned long DEBOUNCE_DELAY_HOLD = 100;
 
 unsigned long queuedStrikes = 0;
 
-void setup() {
-  //Serial.begin(9600);
-  SetPinModes();
-  InitializeRTC();
-  delay(500);
-  InitializeDisplay();
-  InitializeSteppers();
-  InitializeServos();
 
-  runner.init();
-  runner.addTask(calibrateSkullTask);
-  runner.addTask(skullTask);
-  runner.addTask(calibrateReaperTask);
-  runner.addTask(reaperTask);
-  runner.addTask(strikeBellTask);
-
-  calibrateSkullTask.restart();
-  calibrateReaperTask.restart();
-  //reaperTask.restart();
-  //skullTask.restart();
-}
-
-void loop() {
-  runner.execute();
-
-  // Read the key module input
-  inputValue = checkKeyInput();
-  handleInput(inputValue);
-
-  EventHandler();
-  displayTime();
-}
 
 void SetPinModes() {
   pinMode(keyPin, INPUT);
@@ -736,4 +704,37 @@ void strikeBellTaskCallback() {
       strikeCount = 0;           // Reset strike count for the next activation
       break;
   }
+}
+
+void setup() {
+  //Serial.begin(9600);
+  SetPinModes();
+  InitializeRTC();
+  delay(500);
+  InitializeDisplay();
+  InitializeSteppers();
+  InitializeServos();
+
+  runner.init();
+  runner.addTask(calibrateSkullTask);
+  runner.addTask(skullTask);
+  runner.addTask(calibrateReaperTask);
+  runner.addTask(reaperTask);
+  runner.addTask(strikeBellTask);
+
+  calibrateSkullTask.restart();
+  calibrateReaperTask.restart();
+  //reaperTask.restart();
+  //skullTask.restart();
+}
+
+void loop() {
+  runner.execute();
+
+  // Read the key module input
+  inputValue = checkKeyInput();
+  handleInput(inputValue);
+
+  EventHandler();
+  displayTime();
 }
