@@ -136,23 +136,34 @@ bool isEventActive() {  // bool that mainly makes sure that no display updates t
 String checkKeyInput() {
   analogInputValue = analogRead(keyPin);
 
-  // Round the analog input value to the nearest 10
-  roundedInputValue = round(analogInputValue / 10.0) * 10;
+  // Round the analog input value to the nearest 100
+  roundedInputValue = round(analogInputValue / 100.0) * 100;
 
-  if (roundedInputValue == 350) {
-    return "set";
-  } else if (roundedInputValue == 170) {
-    return "down";
+  // Debugging statement for rounded value
+  //Serial.println("RoundedInputvalue: " + String(roundedInputValue)); 
+
+  String inputValue = "";  // Local variable for button input
+
+  if (roundedInputValue == 400) {
+    inputValue = "set";
+  } else if (roundedInputValue == 200) {
+    inputValue = "down";
   } else if (roundedInputValue == 0) {
-    return "up";
-  } else if (roundedInputValue == 90) {
-    return "left";
-  } else if (roundedInputValue == 30) {
-    return "right";
-  } else {
-    return "";
+    inputValue = "up";
+  } else if (roundedInputValue == 100) {
+    inputValue = "left";
+  } else if (roundedInputValue == 300) {
+    inputValue = "right";
   }
+
+  if (inputValue != "") {
+    Serial.println("Button Input: " + inputValue); // Debugging statement
+  }
+
+  return inputValue;
 }
+
+
 
 void handleInput(String inputValue) {
   static unsigned long lastPressTime = 0;
@@ -502,7 +513,6 @@ void calibrateReaperTaskCallback() {
   static unsigned long stepCount = 0;
   unsigned long currentMillis = millis();
   const unsigned long stepDelay = 3;
-  const unsigned long limitSwitchTimeout = 2000;
 
   switch (state) {
     case 0:
@@ -576,7 +586,6 @@ void reaperTaskCallback() {
   static unsigned long stepCount = 0;
   unsigned long currentMillis = millis();
   const unsigned long stepDelay = 3;
-  const int stepSize = 5;               // Increased step size for better visibility in debug
   const unsigned long servoDelay = 15;  // Delay between each servo step in milliseconds
 
   static unsigned long startMillis = 0;
