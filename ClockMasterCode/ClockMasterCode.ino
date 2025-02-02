@@ -6,7 +6,8 @@
 #include <Servo.h>
 #define _TASK_MICRO_RES
 #include <TaskScheduler.h>
-#include <SafeString.h>
+#include <avr/wdt.h>
+
 
 Scheduler runner;  // Create the scheduler
 
@@ -55,9 +56,8 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 bool isDisplayOn = true;
 
 const int keyPin = A0;
-int analogInputValue = 0;
-int roundedInputValue = 0;
-String inputValue = "";
+int Key_read = 0;
+const char* inputValue = "";
 
 unsigned long lastButtonPress = 0, lastInputTime = 0, lastDisplayUpdate = 0;
 
@@ -133,80 +133,48 @@ bool isEventActive() {  // bool that mainly makes sure that no display updates t
   }
 }
 
-String checkKeyInput() {
-  analogInputValue = analogRead(keyPin);
+const char* checkKeyInput() {
+  
+  Key_read = analogRead(keyPin);
 
-  // Round the analog input value to the nearest 100
-  roundedInputValue = round(analogInputValue / 100.0) * 100;
+  if (Key_read>350 and Key_read<360) return "S";
+   else if (Key_read>160 and Key_read<170) return "D";
+   else if (Key_read<10) return "U";
+   else if (Key_read>80 and Key_read<90) return "L"; 
+   else if (Key_read>25 and Key_read<35) return "R";
+   else return "";
 
-  // Debugging statement for rounded value
-  //Serial.println("RoundedInputvalue: " + String(roundedInputValue)); 
-
-  String inputValue = "";  // Local variable for button input
-
-  if (roundedInputValue == 400) {
-    inputValue = "set";
-  } else if (roundedInputValue == 200) {
-    inputValue = "down";
-  } else if (roundedInputValue == 0) {
-    inputValue = "up";
-  } else if (roundedInputValue == 100) {
-    inputValue = "left";
-  } else if (roundedInputValue == 300) {
-    inputValue = "right";
-  }
-
-  if (inputValue != "") {
-    Serial.println("Button Input: " + inputValue); // Debugging statement
-  }
-
-  return inputValue;
 }
 
 
 
-void handleInput(String inputValue) {
+void handleInput(const char* inputValue) {
   static unsigned long lastPressTime = 0;
-  static unsigned long debounceDelay = DEBOUNCE_DELAY_INIT;
   static bool isHolding = false;
-  static String lastInputValue = "";
+  static const char* previousValue = ""; // Track the previous input value
 
   unsigned long currentTime = millis();
 
-  if (inputValue != "") {
-    if (inputValue != lastInputValue) {
-      // New button press
-      lastInputValue = inputValue;
-      isHolding = false;
-      debounceDelay = DEBOUNCE_DELAY_INIT;
-      lastPressTime = currentTime;
+  // Only process input if it has changed and is not empty
+  if (strcmp(inputValue, previousValue) != 0 && strlen(inputValue) > 0) {
+    if (currentTime - lastPressTime >= (isHolding ? DEBOUNCE_DELAY_HOLD : DEBOUNCE_DELAY_INIT)) {
       processInput(inputValue);
-    } else {
-      // Button is being held down
-      if (!isHolding) {
-        if (currentTime - lastPressTime >= debounceDelay) {
-          isHolding = true;
-          debounceDelay = DEBOUNCE_DELAY_HOLD;  // Reduce delay for holding
-          lastPressTime = currentTime;
-          processInput(inputValue);
-        }
-      } else {
-        // Holding with reduced debounce
-        if (currentTime - lastPressTime >= debounceDelay) {
-          lastPressTime = currentTime;
-          processInput(inputValue);
-        }
-      }
+      lastPressTime = currentTime;
+      isHolding = true;
     }
-  } else {
-    // No button pressed
-    lastInputValue = "";
+    previousValue = inputValue; // Update the previous value
+  } else if (strlen(inputValue) == 0) {
+    // No input, reset holding state
     isHolding = false;
+    previousValue = ""; // Reset previous value
   }
 }
 
-void processInput(String inputValue) {
-  if (inputValue == "set") {
+void processInput(const char* inputValue) {
+  Serial.print("Processing input: ");
+  Serial.println(inputValue);
+
+  if (strcmp(inputValue, "S") == 0) {
     if (!isSettingTime) {
       DateTime now = rtc.now();
       hours = now.hour();
@@ -220,13 +188,13 @@ void processInput(String inputValue) {
   }
 
   if (isSettingTime) {
-    if (inputValue == "left") {
+    if (strcmp(inputValue, "L") == 0) {
       settingIndex = (settingIndex + 2) % 3;  // Move left in the setting index
-    } else if (inputValue == "right") {
+    } else if (strcmp(inputValue, "R") == 0) {
       settingIndex = (settingIndex + 1) % 3;  // Move right in the setting index
-    } else if (inputValue == "up") {
+    } else if (strcmp(inputValue, "U") == 0) {
       increaseTime();
-    } else if (inputValue == "down") {
+    } else if (strcmp(inputValue, "D") == 0) {
       decreaseTime();
     }
   }
@@ -502,7 +470,7 @@ void skullTaskCallback() {
       skullTask.disable();               // Disable the task as it is complete
       state = 0;                         // Reset the state machine
       stepCount = 0;                     // Reset step count for the next activation
-      strikeCount = 0;                   // Reset strike count for the next activation
+      strikeCount = 0;                   // Reset strike count for the next activation+
       break;
   }
 }
@@ -728,15 +696,10 @@ void strikeBellTaskCallback() {
   }
 }
 
-void StateMachineHandler(){
-
-  
-
-
-}
-
 void setup() {
-  //Serial.begin(9600);
+  
+  wdt_enable(WDT_PERIOD_2KCLK_gc); // set watchdog to 2 secs
+  //Serial.begin(9600); // Enable serial communication for debugging
   SetPinModes();
   InitializeRTC();
   InitializeDisplay();
@@ -756,15 +719,23 @@ void setup() {
 }
 
 void loop() {
+  
+  static unsigned long lastDisplayUpdate = 0;
+  const char* inputValue = ""; // Declare inputValue outside the if-block
+
+
+  wdt_reset(); // Reset the watchdog to prevent a forced reset
   runner.execute();
   EventHandler();
 
   if (!isEventActive()) {
-    // Read the key module input
-    inputValue = checkKeyInput();
-    handleInput(inputValue);
+    inputValue = checkKeyInput(); 
+    handleInput(inputValue); // Pass the correct value
   }
 
-  displayTime();
-
+  // Update display every 100ms
+  if (millis() - lastDisplayUpdate >= 100) {
+    displayTime();
+    lastDisplayUpdate = millis();
+  }
 }
