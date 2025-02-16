@@ -7,6 +7,7 @@
 #define _TASK_MICRO_RES
 #include <TaskScheduler.h>
 #include <avr/wdt.h>
+#include "RotaryEncoder.h"
 
 
 Scheduler runner;  // Create the scheduler
@@ -33,7 +34,7 @@ RTC_DS3231 rtc;
 #define STEP_REAPER 3
 #define DIR_REAPER 4
 #define ENABLE_REAPER 2
-const int LIMIT_REAPER = A1;
+const int LIMIT_REAPER = A6;
 #define STEP_SKULL 6
 #define DIR_SKULL 7
 #define ENABLE_SKULL 5
@@ -47,6 +48,10 @@ const int LIMIT_SKULL = A2;
 #define OLED_RESET -1
 #define SCREEN_ADDRESS 0x3C
 
+#define BUTTON_INPUT 14
+#define CLK_INPUT 15
+#define DT_INPUT 16
+
 Servo doorRight;
 Servo doorLeft;
 int closedServoPos = 70;
@@ -55,25 +60,21 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 bool isDisplayOn = true;
 
-const int keyPin = A0;
-int Key_read = 0;
-const char* inputValue = "";
-
-unsigned long lastButtonPress = 0, lastInputTime = 0, lastDisplayUpdate = 0;
-
 bool isSettingTime = false;
 int settingIndex = 0;  // 0: hours, 1: minutes, 2: seconds
 
 // Declare the time variables globally
 int hours = 0, minutes = 0, seconds = 0;
 
-const unsigned long DEBOUNCE_DELAY_INIT = 500, DEBOUNCE_DELAY_HOLD = 100, DISPLAY_TIMEOUT=5000;
-
 unsigned long queuedStrikes = 0;
 bool isMidnight = false;
 
 void SetPinModes() {
-  pinMode(keyPin, INPUT);
+  pinMode(CLK_INPUT, INPUT);
+  pinMode(DT_INPUT, INPUT);
+  pinMode(BUTTON_INPUT, INPUT_PULLUP);
+  encoderPinA_prev = digitalRead(CLK_INPUT);
+
   pinMode(ENABLE_REAPER, OUTPUT);
   pinMode(DIR_REAPER, OUTPUT);
   pinMode(STEP_REAPER, OUTPUT);
@@ -86,6 +87,35 @@ void SetPinModes() {
   pinMode(SOLENOID_BELL, OUTPUT);
   pinMode(DOOR_RIGHT, OUTPUT);
   pinMode(DOOR_LEFT, OUTPUT);
+}
+
+int Counter = 0, LastCount = 0; //uneeded just for test
+void RotaryChanged(); //we need to declare the func above so Rotary goes to the one below
+RotaryEncoder Rotary(&RotaryChanged, DT_INPUT, CLK_INPUT, BUTTON_INPUT);
+
+void RotaryChanged()
+{
+  const unsigned int state = Rotary.GetState();
+  
+  if (state & DIR_CW)  
+    Counter++;
+    
+  if (state & DIR_CCW)  
+    Counter--;    
+}
+
+void handleRotary(){
+    if (Rotary.GetButtonDown())  
+    Serial.println("Yay button down!!!");    
+
+  if (LastCount != Counter)  
+  {
+    Serial.println(Counter);    
+    LastCount = Counter;    
+  }
+
+  if(!isSettingTime)
+
 }
 
 void InitializeDisplay() {
@@ -129,117 +159,6 @@ bool isEventActive() {  // bool that mainly makes sure that no display updates t
     return true;
   } else {
     return false;
-  }
-}
-
-const char* checkKeyInput() {
-  Key_read = analogRead(keyPin);
-
-  if (Key_read > 350 && Key_read < 360) {
-    //Serial.println("Button S pressed");
-    return "S";
-  } else if (Key_read > 160 && Key_read < 170) {
-    //Serial.println("Button D pressed");
-    return "D";
-  } else if (Key_read < 10) {
-    //Serial.println("Button U pressed");
-    return "U";
-  } else if (Key_read > 80 && Key_read < 90) {
-    //Serial.println("Button L pressed");
-    return "L";
-  } else if (Key_read > 25 && Key_read < 35) {
-    //Serial.println("Button R pressed");
-    return "R";
-  } else {
-    return "";
-  }
-}
-
-void handleInput(const char* inputValue) {
-  static const char* previousValue = ""; // Track the previous input value
-
-  // Only process input if it has changed and is not empty
-  if (strcmp(inputValue, previousValue) != 0 && strlen(inputValue) > 0) {
-    processInput(inputValue);  // Process the input
-
-    // Reset display timeout when a key is pressed
-    lastInputTime = millis();
-    
-    if (!isDisplayOn) {
-      display.ssd1306_command(SSD1306_DISPLAYON);
-      isDisplayOn = true;
-    }
-  }
-
-  // Update previous value after processing
-  if (strlen(inputValue) > 0) {
-    previousValue = inputValue;  // Update previous value to current input
-  } else {
-    previousValue = "";  // Reset when no input is detected
-  }
-}
-
-
-
-
-void checkDisplayTimeout() {
-  if (isDisplayOn && millis() - lastInputTime > DISPLAY_TIMEOUT && !isEventActive() && !isSettingTime) {
-    display.ssd1306_command(SSD1306_DISPLAYOFF);
-    display.clearDisplay();  // Clear the buffer to prevent residual updates
-    display.display();       // Update with cleared buffer
-    isDisplayOn = false;
-  }
-}
-
-
-
-void processInput(const char* inputValue) {
-  Serial.print("Processing input: ");
-  Serial.println(inputValue);
-
-  if (strcmp(inputValue, "S") == 0) {
-    if (!isSettingTime) {
-      DateTime now = rtc.now();
-      hours = now.hour();
-      minutes = now.minute();
-      seconds = now.second();
-    } else {
-      setRTCTime();
-    }
-    isSettingTime = !isSettingTime;
-    settingIndex = 0;
-  }
-
-  if (isSettingTime) {
-    if (strcmp(inputValue, "L") == 0) {
-      settingIndex = (settingIndex + 2) % 3;  // Move left in the setting index
-    } else if (strcmp(inputValue, "R") == 0) {
-      settingIndex = (settingIndex + 1) % 3;  // Move right in the setting index
-    } else if (strcmp(inputValue, "U") == 0) {
-      increaseTime();
-    } else if (strcmp(inputValue, "D") == 0) {
-      decreaseTime();
-    }
-  }
-}
-
-void increaseTime() {
-  if (settingIndex == 0) {
-    hours = (hours + 1) % 24;
-  } else if (settingIndex == 1) {
-    minutes = (minutes + 1) % 60;
-  } else if (settingIndex == 2) {
-    seconds = (seconds + 1) % 60;
-  }
-}
-
-void decreaseTime() {
-  if (settingIndex == 0) {
-    hours = (hours + 23) % 24;
-  } else if (settingIndex == 1) {
-    minutes = (minutes + 59) % 60;
-  } else if (settingIndex == 2) {
-    seconds = (seconds + 59) % 60;
   }
 }
 
@@ -722,9 +641,9 @@ void strikeBellTaskCallback() {
 }
 
 void setup() {
-  
-  wdt_enable(WDT_PERIOD_2KCLK_gc); // set watchdog to 2 secs
-  Serial.begin(9600); // Enable serial communication for debugging
+
+  wdt_enable(WDT_PERIOD_2KCLK_gc);  // set watchdog to 2 secs
+  Serial.begin(9600);               // Enable serial communication for debugging
   SetPinModes();
   InitializeRTC();
   InitializeDisplay();
@@ -744,25 +663,9 @@ void setup() {
 }
 
 void loop() {
-  
-  static unsigned long lastDisplayUpdate = 0;
-  const char* inputValue = ""; // Declare inputValue outside the if-block
-
-
-  wdt_reset(); // Reset the watchdog to prevent a forced reset
+  wdt_reset();  // Reset the watchdog to prevent a forced reset
   runner.execute();
-  EventHandler();
-
-  if (!isEventActive()) {
-    inputValue = checkKeyInput(); 
-    handleInput(inputValue); // Pass the correct value
-  }
-
-  // Update display every 100ms
-  if (millis() - lastDisplayUpdate >= 100 && isDisplayOn) {
-    displayTime();
-    lastDisplayUpdate = millis();
-  }
-
-  checkDisplayTimeout();
+  //EventHandler();
+  displayTime();
+  handleRotary();
 }
