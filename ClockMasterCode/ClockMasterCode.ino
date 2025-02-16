@@ -61,7 +61,8 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 bool isDisplayOn = true;
 
 bool isSettingTime = false;
-int settingIndex = 0;  // 0: hours, 1: minutes, 2: seconds
+bool isEditingNumber = false;
+int settingIndex = 0;  // 0: hours, 1: minutes, 2: seconds, 3: confirm button
 
 // Declare the time variables globally
 int hours = 0, minutes = 0, seconds = 0;
@@ -88,32 +89,85 @@ void SetPinModes() {
   pinMode(DOOR_LEFT, OUTPUT);
 }
 
-int Counter = 0, LastCount = 0; //uneeded just for test
-void RotaryChanged(); //we need to declare the func above so Rotary goes to the one below
+void RotaryChanged();  //we need to declare the func above so Rotary goes to the one below
 RotaryEncoder Rotary(&RotaryChanged, DT_INPUT, CLK_INPUT, BUTTON_INPUT);
 
-void RotaryChanged()
-{
+void RotaryChanged() {
   const unsigned int state = Rotary.GetState();
-  
-  if (state & DIR_CW)  
-    Counter++;
-    
-  if (state & DIR_CCW)  
-    Counter--;    
-}
 
-void handleRotary(){
-    if (Rotary.GetButtonDown())  
-    Serial.println("Yay button down!!!");    
+  if (state & DIR_CW) {
+    if (isSettingTime) {
+      if (isEditingNumber) {
+        switch (settingIndex) {
+          case 0: hours = (hours + 1) % 24; break;
+          case 1: minutes = (minutes + 1) % 60; break;
+          case 2: seconds = (seconds + 1) % 60; break;
+        }
+      } else {
+        settingIndex = (settingIndex + 1) % 4;
+      }
+    }
 
-  if (LastCount != Counter)  
-  {
-    Serial.println(Counter);    
-    LastCount = Counter;    
+    updateDisplayActivity();
   }
 
+  if (state & DIR_CCW) {
+    if (isSettingTime) {
+      if (isEditingNumber) {
+        switch (settingIndex) {
+          case 0: hours = (hours + 23) % 24; break;
+          case 1: minutes = (minutes + 59) % 60; break;
+          case 2: seconds = (seconds + 59) % 60; break;
+        }
+      } else {
+        settingIndex = (settingIndex + 3) % 4;
+      }
+    }
+
+    updateDisplayActivity();
+  }
 }
+
+unsigned long lastDebounceTime = 0;
+unsigned long debounceDelay = 50;  // 50 milliseconds debounce time
+
+void handleRotary() {
+  unsigned long currentMillis = millis();
+
+  if ((currentMillis - lastDebounceTime) > debounceDelay) {
+    if (Rotary.GetButtonDown()) {
+      Serial.println("Button Pressed");
+      updateDisplayActivity();
+
+      if (!isDisplayOn) {
+        isDisplayOn = true;
+        Serial.println("Display turned on");
+      } else if (!isSettingTime) {
+        isSettingTime = true;
+        settingIndex = 0;  // Start at the first setting index
+        Serial.println("Setting time mode started");
+      } else if (isSettingTime && !isEditingNumber && settingIndex != 3) {
+        isEditingNumber = true;
+        Serial.println("Editing number started");
+      } else if (isSettingTime && isEditingNumber && settingIndex != 3) {
+        isEditingNumber = false;
+        Serial.println("Editing number ended");
+      } else if (isSettingTime && settingIndex == 3) {
+        // If settingIndex is 3, end the entire process
+        isSettingTime = false;    // End the setting time process
+        isEditingNumber = false;  // End the number editing
+        setRTCTime();             // Set RTC time
+        Serial.println("RTC time set and process ended");
+      } else {
+        Serial.println("Button Pressed - Unexpected State");
+      }
+    }
+
+    lastDebounceTime = currentMillis;
+  }
+}
+
+
 
 void InitializeDisplay() {
   if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
@@ -121,6 +175,11 @@ void InitializeDisplay() {
     for (;;)
       ;
   }
+
+  // Rotate display 180 degrees
+  display.ssd1306_command(SSD1306_SEGREMAP);    // Flip horizontally
+  display.ssd1306_command(SSD1306_COMSCANINC);  // Flip vertically
+
   display.clearDisplay();
   display.display();
 }
@@ -163,6 +222,26 @@ void setRTCTime() {
   rtc.adjust(DateTime(1111, 1, 1, hours, minutes, seconds));
 }
 
+unsigned long lastActivityTime = 0;
+const unsigned long displayTimeout = 5000;  // 10 seconds
+
+void updateDisplayActivity() {
+  lastActivityTime = millis();
+  if (!isDisplayOn) {
+    display.ssd1306_command(SSD1306_DISPLAYON);
+    isDisplayOn = true;
+  }
+}
+
+void checkDisplayTimeout() {
+  if (!isSettingTime && isDisplayOn && (millis() - lastActivityTime > displayTimeout)) {
+    display.ssd1306_command(SSD1306_DISPLAYOFF);
+    display.clearDisplay();  // Clear the buffer to prevent residual updates
+    display.display();       // Update with cleared buffer
+    isDisplayOn = false;
+  }
+}
+
 void displayTime() {
   if (!isEventActive()) {  // Don't update the display if the event is running
 
@@ -195,20 +274,48 @@ void displayTime() {
     // Time setting mode
     if (isSettingTime) {
       display.setTextSize(2);
-      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+
       if (settingIndex == 0) {
+        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
         display.setCursor(0, 0);
         display.print(hours < 10 ? "0" : "");
         display.print(hours);
-      } else if (settingIndex == 1) {
+      } else {
+        display.setTextColor(SSD1306_WHITE);
+      }
+
+      if (settingIndex == 1) {
+        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
         display.setCursor(35, 0);
         display.print(minutes < 10 ? "0" : "");
         display.print(minutes);
       } else {
+        display.setTextColor(SSD1306_WHITE);
+      }
+
+      if (settingIndex == 2) {
+        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
         display.setCursor(70, 0);
         display.print(seconds < 10 ? "0" : "");
         display.print(seconds);
+      } else {
+        display.setTextColor(SSD1306_WHITE);
       }
+
+      // Display "OK" in a column with increased spacing
+      int x = 110;  // X position for alignment
+      int y = 0;    // Start Y position
+
+      if (settingIndex == 3) {
+        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);  // Inverted color when selected
+      } else {
+        display.setTextColor(SSD1306_WHITE);  // Ensure visibility when not selected
+      }
+
+      display.setCursor(x, y);
+      display.print("O");
+      display.setCursor(x, y + 15);  // Increased spacing
+      display.print("K");
 
       display.setTextSize(1);
       display.setTextColor(SSD1306_WHITE);
@@ -225,6 +332,8 @@ void displayTime() {
     }
   }
 }
+
+
 
 void EventHandler() {
   if (!isSettingTime && !isEventActive()) {
@@ -646,6 +755,7 @@ void setup() {
   InitializeDisplay();
   InitializeSteppers();
   InitializeServos();
+  updateDisplayActivity();
 
   runner.init();
 
@@ -662,7 +772,9 @@ void setup() {
 void loop() {
   wdt_reset();  // Reset the watchdog to prevent a forced reset
   runner.execute();
-  //EventHandler();
-  displayTime();
+  EventHandler();
   handleRotary();
+  //checkDisplayTimeout();
+  displayTime();
+  
 }
