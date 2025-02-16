@@ -73,7 +73,6 @@ void SetPinModes() {
   pinMode(CLK_INPUT, INPUT);
   pinMode(DT_INPUT, INPUT);
   pinMode(BUTTON_INPUT, INPUT_PULLUP);
-  encoderPinA_prev = digitalRead(CLK_INPUT);
 
   pinMode(ENABLE_REAPER, OUTPUT);
   pinMode(DIR_REAPER, OUTPUT);
@@ -113,8 +112,6 @@ void handleRotary(){
     Serial.println(Counter);    
     LastCount = Counter;    
   }
-
-  if(!isSettingTime)
 
 }
 
