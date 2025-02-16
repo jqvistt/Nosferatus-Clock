@@ -67,7 +67,7 @@ int settingIndex = 0;  // 0: hours, 1: minutes, 2: seconds
 // Declare the time variables globally
 int hours = 0, minutes = 0, seconds = 0;
 
-const unsigned long DEBOUNCE_DELAY_INIT = 500, DEBOUNCE_DELAY_HOLD = 100;
+const unsigned long DEBOUNCE_DELAY_INIT = 500, DEBOUNCE_DELAY_HOLD = 100, DISPLAY_TIMEOUT=5000;
 
 unsigned long queuedStrikes = 0;
 bool isMidnight = false;
@@ -105,11 +105,10 @@ void InitializeSteppers() {
 }
 
 void InitializeServos() {
-  doorLeft.attach(DOOR_LEFT);
-  doorRight.attach(DOOR_RIGHT);
-
   doorLeft.write(180 - closedServoPos);  // Initial position
   doorRight.write(closedServoPos);       // Initial position
+  doorLeft.attach(DOOR_LEFT);
+  doorRight.attach(DOOR_RIGHT);
 }
 
 void InitializeRTC() {
@@ -134,41 +133,65 @@ bool isEventActive() {  // bool that mainly makes sure that no display updates t
 }
 
 const char* checkKeyInput() {
-  
   Key_read = analogRead(keyPin);
 
-  if (Key_read>350 and Key_read<360) return "S";
-   else if (Key_read>160 and Key_read<170) return "D";
-   else if (Key_read<10) return "U";
-   else if (Key_read>80 and Key_read<90) return "L"; 
-   else if (Key_read>25 and Key_read<35) return "R";
-   else return "";
-
+  if (Key_read > 350 && Key_read < 360) {
+    //Serial.println("Button S pressed");
+    return "S";
+  } else if (Key_read > 160 && Key_read < 170) {
+    //Serial.println("Button D pressed");
+    return "D";
+  } else if (Key_read < 10) {
+    //Serial.println("Button U pressed");
+    return "U";
+  } else if (Key_read > 80 && Key_read < 90) {
+    //Serial.println("Button L pressed");
+    return "L";
+  } else if (Key_read > 25 && Key_read < 35) {
+    //Serial.println("Button R pressed");
+    return "R";
+  } else {
+    return "";
+  }
 }
 
-
-
 void handleInput(const char* inputValue) {
-  static unsigned long lastPressTime = 0;
-  static bool isHolding = false;
   static const char* previousValue = ""; // Track the previous input value
-
-  unsigned long currentTime = millis();
 
   // Only process input if it has changed and is not empty
   if (strcmp(inputValue, previousValue) != 0 && strlen(inputValue) > 0) {
-    if (currentTime - lastPressTime >= (isHolding ? DEBOUNCE_DELAY_HOLD : DEBOUNCE_DELAY_INIT)) {
-      processInput(inputValue);
-      lastPressTime = currentTime;
-      isHolding = true;
+    processInput(inputValue);  // Process the input
+
+    // Reset display timeout when a key is pressed
+    lastInputTime = millis();
+    
+    if (!isDisplayOn) {
+      display.ssd1306_command(SSD1306_DISPLAYON);
+      isDisplayOn = true;
     }
-    previousValue = inputValue; // Update the previous value
-  } else if (strlen(inputValue) == 0) {
-    // No input, reset holding state
-    isHolding = false;
-    previousValue = ""; // Reset previous value
+  }
+
+  // Update previous value after processing
+  if (strlen(inputValue) > 0) {
+    previousValue = inputValue;  // Update previous value to current input
+  } else {
+    previousValue = "";  // Reset when no input is detected
   }
 }
+
+
+
+
+void checkDisplayTimeout() {
+  if (isDisplayOn && millis() - lastInputTime > DISPLAY_TIMEOUT && !isEventActive() && !isSettingTime) {
+    display.ssd1306_command(SSD1306_DISPLAYOFF);
+    display.clearDisplay();  // Clear the buffer to prevent residual updates
+    display.display();       // Update with cleared buffer
+    isDisplayOn = false;
+  }
+}
+
+
 
 void processInput(const char* inputValue) {
   Serial.print("Processing input: ");
@@ -253,6 +276,7 @@ void displayTime() {
     display.print(seconds < 10 ? "0" : "");
     display.print(seconds);
 
+    // Time setting mode
     if (isSettingTime) {
       display.setTextSize(2);
       display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
@@ -275,6 +299,7 @@ void displayTime() {
       display.setCursor(0, 20);
       display.print("Setting Time...");
     }
+
     display.display();
 
   } else {
@@ -699,7 +724,7 @@ void strikeBellTaskCallback() {
 void setup() {
   
   wdt_enable(WDT_PERIOD_2KCLK_gc); // set watchdog to 2 secs
-  //Serial.begin(9600); // Enable serial communication for debugging
+  Serial.begin(9600); // Enable serial communication for debugging
   SetPinModes();
   InitializeRTC();
   InitializeDisplay();
@@ -734,8 +759,10 @@ void loop() {
   }
 
   // Update display every 100ms
-  if (millis() - lastDisplayUpdate >= 100) {
+  if (millis() - lastDisplayUpdate >= 100 && isDisplayOn) {
     displayTime();
     lastDisplayUpdate = millis();
   }
+
+  checkDisplayTimeout();
 }
