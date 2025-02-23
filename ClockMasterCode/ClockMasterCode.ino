@@ -38,7 +38,7 @@ const int LIMIT_REAPER = A6;
 #define STEP_SKULL 6
 #define DIR_SKULL 7
 #define ENABLE_SKULL 5
-const int LIMIT_SKULL = A2;
+const int LIMIT_SKULL = A7;
 #define DOOR_RIGHT 8
 #define DOOR_LEFT 12
 #define SOLENOID_SKULL 11
@@ -107,8 +107,6 @@ void RotaryChanged() {
         settingIndex = (settingIndex + 1) % 4;
       }
     }
-
-    updateDisplayActivity();
   }
 
   if (state & DIR_CCW) {
@@ -123,8 +121,6 @@ void RotaryChanged() {
         settingIndex = (settingIndex + 3) % 4;
       }
     }
-
-    updateDisplayActivity();
   }
 }
 
@@ -137,33 +133,38 @@ void handleRotary() {
   if ((currentMillis - lastDebounceTime) > debounceDelay) {
     if (Rotary.GetButtonDown()) {
       Serial.println("Button Pressed");
-      updateDisplayActivity();
 
       if (!isDisplayOn) {
-        isDisplayOn = true;
+        // If the display is off, only wake it up and do nothing else
+        updateDisplayActivity();  // Wake up the display
+        isDisplayOn = true;      // Turn on the display
         Serial.println("Display turned on");
-      } else if (!isSettingTime) {
-        isSettingTime = true;
-        settingIndex = 0;  // Start at the first setting index
-        Serial.println("Setting time mode started");
-      } else if (isSettingTime && !isEditingNumber && settingIndex != 3) {
-        isEditingNumber = true;
-        Serial.println("Editing number started");
-      } else if (isSettingTime && isEditingNumber && settingIndex != 3) {
-        isEditingNumber = false;
-        Serial.println("Editing number ended");
-      } else if (isSettingTime && settingIndex == 3) {
-        // If settingIndex is 3, end the entire process
-        isSettingTime = false;    // End the setting time process
-        isEditingNumber = false;  // End the number editing
-        setRTCTime();             // Set RTC time
-        Serial.println("RTC time set and process ended");
       } else {
-        Serial.println("Button Pressed - Unexpected State");
+        // If the display is already on, handle the button press for time editing mode
+        if (!isSettingTime) {
+          isSettingTime = true;
+          settingIndex = 0;  // Start at the first setting index
+          Serial.println("Setting time mode started");
+        } else if (isSettingTime && !isEditingNumber && settingIndex != 3) {
+          isEditingNumber = true;
+          Serial.println("Editing number started");
+        } else if (isSettingTime && isEditingNumber && settingIndex != 3) {
+          isEditingNumber = false;
+          Serial.println("Editing number ended");
+        } else if (isSettingTime && settingIndex == 3) {
+          // If settingIndex is 3, end the entire process
+          isSettingTime = false;    // End the setting time process
+          isEditingNumber = false;  // End the number editing
+          updateDisplayActivity(); // Update Display activity so that you can see the time edited
+          setRTCTime();             // Set RTC time
+          Serial.println("RTC time set and process ended");
+        } else {
+          Serial.println("Button Pressed - Unexpected State");
+        }
       }
-    }
 
-    lastDebounceTime = currentMillis;
+      lastDebounceTime = currentMillis;  // Update the debounce timer
+    }
   }
 }
 
@@ -242,13 +243,17 @@ void checkDisplayTimeout() {
   }
 }
 
+unsigned long lastBlinkTime = 0;
+bool blinkState = true;
+
 void displayTime() {
   if (!isEventActive()) {  // Don't update the display if the event is running
-
     if (!isDisplayOn) {
-      display.ssd1306_command(SSD1306_DISPLAYON);  // Turn on the display
-      isDisplayOn = true;
+      return;  // Exit if the display is off
     }
+
+    // Ensure the display is on
+    display.ssd1306_command(SSD1306_DISPLAYON);
 
     DateTime now = rtc.now();
     if (!isSettingTime) {
@@ -271,33 +276,45 @@ void displayTime() {
     display.print(seconds < 10 ? "0" : "");
     display.print(seconds);
 
+    // Blink logic (500ms interval)
+    if (millis() - lastBlinkTime > 500) {
+      blinkState = !blinkState;
+      lastBlinkTime = millis();
+    }
+
     // Time setting mode
     if (isSettingTime) {
       display.setTextSize(2);
 
       if (settingIndex == 0) {
-        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
         display.setCursor(0, 0);
-        display.print(hours < 10 ? "0" : "");
-        display.print(hours);
+        if (!isEditingNumber || blinkState) {
+          display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+          display.print(hours < 10 ? "0" : "");
+          display.print(hours);
+        }
       } else {
         display.setTextColor(SSD1306_WHITE);
       }
 
       if (settingIndex == 1) {
-        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
         display.setCursor(35, 0);
-        display.print(minutes < 10 ? "0" : "");
-        display.print(minutes);
+        if (!isEditingNumber || blinkState) {
+          display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+          display.print(minutes < 10 ? "0" : "");
+          display.print(minutes);
+        }
       } else {
         display.setTextColor(SSD1306_WHITE);
       }
 
       if (settingIndex == 2) {
-        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
         display.setCursor(70, 0);
-        display.print(seconds < 10 ? "0" : "");
-        display.print(seconds);
+        if (!isEditingNumber || blinkState) {
+          display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+          display.print(seconds < 10 ? "0" : "");
+          display.print(seconds);
+        }
       } else {
         display.setTextColor(SSD1306_WHITE);
       }
@@ -324,16 +341,8 @@ void displayTime() {
     }
 
     display.display();
-
-  } else {
-    if (isDisplayOn) {
-      display.ssd1306_command(SSD1306_DISPLAYOFF);  // Turn off the display
-      isDisplayOn = false;
-    }
   }
 }
-
-
 
 void EventHandler() {
   if (!isSettingTime && !isEventActive()) {
@@ -749,13 +758,12 @@ void strikeBellTaskCallback() {
 void setup() {
 
   wdt_enable(WDT_PERIOD_2KCLK_gc);  // set watchdog to 2 secs
-  Serial.begin(9600);               // Enable serial communication for debugging
+  //Serial.begin(9600);               // Enable serial communication for debugging
   SetPinModes();
-  InitializeRTC();
   InitializeDisplay();
   InitializeSteppers();
   InitializeServos();
-  updateDisplayActivity();
+  InitializeRTC();
 
   runner.init();
 
@@ -774,7 +782,6 @@ void loop() {
   runner.execute();
   EventHandler();
   handleRotary();
-  //checkDisplayTimeout();
-  displayTime();
-  
+  checkDisplayTimeout();
+  displayTime(); 
 }
